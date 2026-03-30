@@ -1,0 +1,339 @@
+{
+    "name": "Drip Campaign Follow-up (24h+)",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "triggerAtHour": 10,
+                            "triggerAtMinute": 0
+                        }
+                    ]
+                }
+            },
+            "id": "cron-daily",
+            "name": "Daily 10AM Check",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "SELECT user_id, page_id, last_interaction, followup_count, opt_in_marketing FROM followup_queue WHERE last_interaction < NOW() - INTERVAL '24 hours' AND followup_count < 3 AND is_active = true LIMIT 50",
+                "options": {}
+            },
+            "id": "postgres-get-leads",
+            "name": "Get Stale Leads",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                450,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "1",
+                    "name": "Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "batchSize": 5,
+                "options": {
+                    "reset": false
+                }
+            },
+            "id": "split-batches",
+            "name": "Split in Batches",
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 3,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "check-24h",
+                            "leftValue": "={{ $now.diff($json.last_interaction, 'hours') }}",
+                            "rightValue": 24,
+                            "operator": {
+                                "type": "number",
+                                "operation": "gte"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-24h",
+            "name": "Filter >24h",
+            "type": "n8n-nodes-base.filter",
+            "typeVersion": 2,
+            "position": [
+                850,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.opt_in_marketing }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "check-optin",
+            "name": "Has Marketing Opt-in?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1050,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://graph.facebook.com/v22.0/me/messages",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpQueryAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"recipient\": { \"id\": \"{{ $json.user_id }}\" },\n  \"message\": {\n    \"text\": \"Chào bạn! 👋 Shop có ưu đãi đặc biệt dành riêng cho bạn. Bạn có muốn xem không?\",\n    \"quick_replies\": [\n      { \"content_type\": \"text\", \"title\": \"Xem ngay 🎁\", \"payload\": \"VIEW_PROMO\" },\n      { \"content_type\": \"text\", \"title\": \"Để sau\", \"payload\": \"LATER\" }\n    ]\n  },\n  \"messaging_type\": \"MESSAGE_TAG\",\n  \"tag\": \"CONFIRMED_EVENT_UPDATE\"\n}",
+                "options": {}
+            },
+            "id": "send-followup-tag",
+            "name": "Send Follow-up (Message Tag)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1250,
+                200
+            ],
+            "credentials": {
+                "httpQueryAuth": {
+                    "id": "2",
+                    "name": "FB Page Token"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://graph.facebook.com/v22.0/me/messages",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpQueryAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"recipient\": {\n    \"notification_messages_token\": \"{{ $json.notification_token }}\"\n  },\n  \"message\": {\n    \"text\": \"🎉 Ưu đãi giảm 20% chỉ hôm nay! Click để xem ngay.\"\n  },\n  \"messaging_type\": \"MESSAGE_TAG\",\n  \"tag\": \"CONFIRMED_EVENT_UPDATE\"\n}",
+                "options": {}
+            },
+            "id": "send-marketing-msg",
+            "name": "Send Marketing Message",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1250,
+                400
+            ],
+            "credentials": {
+                "httpQueryAuth": {
+                    "id": "2",
+                    "name": "FB Page Token"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE followup_queue SET followup_count = followup_count + 1, last_followup = NOW() WHERE user_id = '{{ $json.user_id }}'",
+                "options": {}
+            },
+            "id": "update-count",
+            "name": "Update Follow-up Count",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                1450,
+                300
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "1",
+                    "name": "Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "amount": 2,
+                "unit": "seconds"
+            },
+            "id": "wait-node",
+            "name": "Rate Limit Delay",
+            "type": "n8n-nodes-base.wait",
+            "typeVersion": 1.1,
+            "position": [
+                1650,
+                300
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-end",
+            "name": "Loop Back",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1850,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Daily 10AM Check": {
+            "main": [
+                [
+                    {
+                        "node": "Get Stale Leads",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Stale Leads": {
+            "main": [
+                [
+                    {
+                        "node": "Split in Batches",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Split in Batches": {
+            "main": [
+                [
+                    {
+                        "node": "Filter >24h",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Loop Back",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Filter >24h": {
+            "main": [
+                [
+                    {
+                        "node": "Has Marketing Opt-in?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Has Marketing Opt-in?": {
+            "main": [
+                [
+                    {
+                        "node": "Send Marketing Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Send Follow-up (Message Tag)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Follow-up (Message Tag)": {
+            "main": [
+                [
+                    {
+                        "node": "Update Follow-up Count",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Marketing Message": {
+            "main": [
+                [
+                    {
+                        "node": "Update Follow-up Count",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update Follow-up Count": {
+            "main": [
+                [
+                    {
+                        "node": "Rate Limit Delay",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Rate Limit Delay": {
+            "main": [
+                [
+                    {
+                        "node": "Split in Batches",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [
+        "follow-up",
+        "drip-campaign",
+        "marketing"
+    ],
+    "triggerCount": 1,
+    "pinData": {},
+    "versionId": "1"
+}

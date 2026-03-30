@@ -1,0 +1,404 @@
+{
+    "name": "Chat Processing & Response",
+    "active": true,
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "process-chat",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "Webhook (from Debouncer)",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/chat/process",
+                "method": "POST",
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify($json.body) }}"
+            },
+            "id": "ai-process",
+            "name": "AI Brain Processing",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Prepare response parts\nconst data = $input.first().json;\nconst parts = data.response_parts || [];\nconst userId = $input.first().json.user_id || $input.first().json.body.user_id;\n// Note: input to chat/process was body, output is result\n// We need to pass original user_id if not in output\n// Actually chat/process output doesn't have user_id, but the flow context does.\n// Let's ensure we get user_id from the original webhook body if needed.\n// But n8n keeps context.\n\nconst products = data.products || [];\nconst shouldInvite = data.should_invite_zalo;\n\nreturn parts.map((text, index) => ({\n  json: {\n    userId,\n    text,\n    index,\n    isLast: index === parts.length - 1,\n    products: index === parts.length - 1 ? products : [],\n    shouldInvite: index === parts.length - 1 ? shouldInvite : false\n  }\n}));"
+            },
+            "id": "prepare-parts",
+            "name": "Prepare Parts",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "batchSize": 1,
+                "options": {}
+            },
+            "id": "loop",
+            "name": "Loop Parts",
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 3,
+            "position": [
+                850,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://graph.facebook.com/v18.0/me/messages",
+                "method": "POST",
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "access_token",
+                            "value": "={{ $env.FB_PAGE_ACCESS_TOKEN }}"
+                        }
+                    ]
+                },
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify({ recipient: { id: $json.userId }, sender_action: 'typing_on' }) }}"
+            },
+            "id": "typing-on",
+            "name": "Show Typing",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1050,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "amount": "={{ Math.floor(Math.random() * 2000) + 1000 }}",
+                "unit": "milliseconds"
+            },
+            "id": "delay",
+            "name": "Human Delay",
+            "type": "n8n-nodes-base.wait",
+            "typeVersion": 1,
+            "position": [
+                1250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://graph.facebook.com/v18.0/me/messages",
+                "method": "POST",
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "access_token",
+                            "value": "={{ $env.FB_PAGE_ACCESS_TOKEN }}"
+                        }
+                    ]
+                },
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify({ recipient: { id: $json.userId }, message: { text: $json.text }, messaging_type: 'RESPONSE' }) }}"
+            },
+            "id": "send-text",
+            "name": "Send Text",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.isLast && $json.products.length > 0 }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "check-products",
+            "name": "Has Products?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                1650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "return $input.first().json.products.filter(p => p.image_url).map(p => ({ json: { ...$input.first().json, imageUrl: p.image_url } }));"
+            },
+            "id": "prep-products",
+            "name": "Prep Images",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1850,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://graph.facebook.com/v18.0/me/messages",
+                "method": "POST",
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "access_token",
+                            "value": "={{ $env.FB_PAGE_ACCESS_TOKEN }}"
+                        }
+                    ]
+                },
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify({ recipient: { id: $json.userId }, message: { attachment: { type: 'image', payload: { url: $json.imageUrl, is_reusable: true } } } }) }}"
+            },
+            "id": "send-image",
+            "name": "Send Image",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                2050,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.isLast && $json.shouldInvite }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "check-invite",
+            "name": "Should Invite Zalo?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                1650,
+                500
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://graph.facebook.com/v18.0/me/messages",
+                "method": "POST",
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "access_token",
+                            "value": "={{ $env.FB_PAGE_ACCESS_TOKEN }}"
+                        }
+                    ]
+                },
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify({ recipient: { id: $json.userId }, message: { text: 'Tham gia nhóm Zalo VIP để nhận ưu đãi nhé: ' + $env.ZALO_GROUP_LINK } }) }}"
+            },
+            "id": "send-invite",
+            "name": "Send Zalo Link",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1850,
+                500
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "loop-back",
+            "name": "Loop Back",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                2250,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook (from Debouncer)": {
+            "main": [
+                [
+                    {
+                        "node": "AI Brain Processing",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Brain Processing": {
+            "main": [
+                [
+                    {
+                        "node": "Prepare Parts",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Parts": {
+            "main": [
+                [
+                    {
+                        "node": "Loop Parts",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Loop Parts": {
+            "main": [
+                [
+                    {
+                        "node": "Show Typing",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Show Typing": {
+            "main": [
+                [
+                    {
+                        "node": "Human Delay",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Human Delay": {
+            "main": [
+                [
+                    {
+                        "node": "Send Text",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Text": {
+            "main": [
+                [
+                    {
+                        "node": "Has Products?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Should Invite Zalo?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Has Products?": {
+            "main": [
+                [
+                    {
+                        "node": "Prep Images",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Loop Back",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prep Images": {
+            "main": [
+                [
+                    {
+                        "node": "Send Image",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Image": {
+            "main": [
+                [
+                    {
+                        "node": "Loop Back",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Should Invite Zalo?": {
+            "main": [
+                [
+                    {
+                        "node": "Send Zalo Link",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Loop Back",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Zalo Link": {
+            "main": [
+                [
+                    {
+                        "node": "Loop Back",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Loop Back": {
+            "main": [
+                [
+                    {
+                        "node": "Loop Parts",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  # ============ N8N - Workflow Orchestration ============
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: smart-chatbot-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=${N8N_PORT}
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - chatbot-network
+
+  # ============ PostgreSQL - N8N Database ============
+  postgres:
+    image: postgres:15-alpine
+    container_name: smart-chatbot-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ Redis - State & Debouncing ============
+  redis:
+    image: redis:7-alpine
+    container_name: smart-chatbot-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ Neo4j - GraphRAG Knowledge Base ============
+  neo4j:
+    image: neo4j:5-community
+    container_name: smart-chatbot-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=${NEO4J_AUTH}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ Python API - AI Brain ============
+  api:
+    build:
+      context: ./python
+      dockerfile: Dockerfile
+    container_name: smart-chatbot-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - FB_VERIFY_TOKEN=${FB_VERIFY_TOKEN}
+      - FB_PAGE_ACCESS_TOKEN=${FB_PAGE_ACCESS_TOKEN}
+      - FB_APP_SECRET=${FB_APP_SECRET}
+      - FB_ADMIN_PSIDS=${FB_ADMIN_PSIDS}
+      - ZALO_OA_ID=${ZALO_OA_ID}
+      - ZALO_ACCESS_TOKEN=${ZALO_ACCESS_TOKEN}
+      - ZALO_GROUP_LINK=${ZALO_GROUP_LINK}
+      - TELESALE_PHONES=${TELESALE_PHONES}
+      - DEBOUNCE_SECONDS=${DEBOUNCE_SECONDS}
+      - DEBOUNCE_QUICK_SECONDS=${DEBOUNCE_QUICK_SECONDS}
+      - ADMIN_HANDOVER_MINUTES=${ADMIN_HANDOVER_MINUTES}
+      - WEBHOOK_URL=http://n8n:5678
+    volumes:
+      - ./python/app:/app/app
+      - ./knowledge/data:/app/knowledge
+    depends_on:
+      - redis
+      - neo4j
+    networks:
+      - chatbot-network
+
+networks:
+  chatbot-network:
+    driver: bridge
+
+volumes:
+  n8n_data:
+  postgres_data:
+  redis_data:
+  neo4j_data:
+  neo4j_logs:

@@ -1,0 +1,209 @@
+{
+    "name": "Zalo Token Auto-Refresh",
+    "active": true,
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "days",
+                            "daysInterval": 25
+                        }
+                    ]
+                }
+            },
+            "id": "schedule-trigger",
+            "name": "Every 25 Days",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "https://oauth.zaloapp.com/v4/oa/access_token",
+                "method": "POST",
+                "sendBody": true,
+                "contentType": "form-urlencoded",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "refresh_token",
+                            "value": "={{ $env.ZALO_REFRESH_TOKEN }}"
+                        },
+                        {
+                            "name": "app_id",
+                            "value": "={{ $env.ZALO_APP_ID }}"
+                        },
+                        {
+                            "name": "grant_type",
+                            "value": "refresh_token"
+                        }
+                    ]
+                },
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "secret_key",
+                            "value": "={{ $env.ZALO_OA_SECRET }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "refresh-token",
+            "name": "Refresh Zalo Token",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.access_token ? true : false }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "check-success",
+            "name": "Token Received?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Log the new tokens\nconst newAccessToken = $input.first().json.access_token;\nconst newRefreshToken = $input.first().json.refresh_token;\nconst expiresIn = $input.first().json.expires_in;\n\nconsole.log(`New Access Token: ${newAccessToken.substring(0, 20)}...`);\nconsole.log(`Expires in: ${expiresIn} seconds`);\n\n// TODO: In production, update these in your secret store\n// Options:\n// 1. Update environment variable via n8n API\n// 2. Store in Redis/Database\n// 3. Update AWS Secrets Manager / HashiCorp Vault\n\nreturn [{\n  json: {\n    status: 'success',\n    access_token: newAccessToken,\n    refresh_token: newRefreshToken,\n    expires_in: expiresIn,\n    refreshed_at: new Date().toISOString()\n  }\n}];"
+            },
+            "id": "process-token",
+            "name": "Process New Token",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                850,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/admin/update-zalo-token",
+                "method": "POST",
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify({ access_token: $json.access_token, refresh_token: $json.refresh_token }) }}"
+            },
+            "id": "update-api",
+            "name": "Update API Service",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1050,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "message": "✅ Zalo Token Refreshed Successfully\n\nNew token expires in: {{ $json.expires_in }} seconds\nRefreshed at: {{ $json.refreshed_at }}"
+            },
+            "id": "notify-success",
+            "name": "Log Success",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1250,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Token refresh failed\nconst error = $input.first().json;\n\nconsole.error('Zalo token refresh failed:', JSON.stringify(error));\n\n// TODO: Send alert to admin via Telegram/Slack/Email\n\nreturn [{\n  json: {\n    status: 'error',\n    error: error,\n    failed_at: new Date().toISOString()\n  }\n}];"
+            },
+            "id": "handle-error",
+            "name": "Handle Error",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                850,
+                400
+            ]
+        }
+    ],
+    "connections": {
+        "Every 25 Days": {
+            "main": [
+                [
+                    {
+                        "node": "Refresh Zalo Token",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Refresh Zalo Token": {
+            "main": [
+                [
+                    {
+                        "node": "Token Received?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Token Received?": {
+            "main": [
+                [
+                    {
+                        "node": "Process New Token",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Handle Error",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Process New Token": {
+            "main": [
+                [
+                    {
+                        "node": "Update API Service",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update API Service": {
+            "main": [
+                [
+                    {
+                        "node": "Log Success",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    }
+}

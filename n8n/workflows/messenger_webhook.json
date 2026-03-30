@@ -1,0 +1,249 @@
+{
+    "name": "Messenger Webhook Handler",
+    "active": true,
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "messenger",
+                "options": {}
+            },
+            "id": "webhook-receive",
+            "name": "Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.body.object }}",
+                            "value2": "page"
+                        }
+                    ]
+                }
+            },
+            "id": "check-page-event",
+            "name": "Is Page Event?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Extract messaging events from webhook\nconst entry = $input.first().json.body.entry[0];\nconst pageId = entry.id;\nconst messaging = entry.messaging || [];\n\nreturn messaging.map(event => ({\n  json: {\n    pageId,\n    senderId: event.sender?.id,\n    recipientId: event.recipient?.id,\n    timestamp: event.timestamp,\n    message: event.message,\n    postback: event.postback\n  }\n}));"
+            },
+            "id": "extract-messages",
+            "name": "Extract Messages",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{ $json.senderId }}",
+                            "value2": "={{ $env.FB_ADMIN_PSID }}",
+                            "operation": "equals"
+                        }
+                    ]
+                }
+            },
+            "id": "check-admin",
+            "name": "Is Admin?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                850,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/admin/handover",
+                "method": "POST",
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify({ page_id: $json.pageId, user_id: $json.recipientId }) }}"
+            },
+            "id": "set-admin-handover",
+            "name": "Set Admin Handover",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1050,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/webhook/check-handover",
+                "method": "GET",
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "page_id",
+                            "value": "={{ $json.pageId }}"
+                        },
+                        {
+                            "name": "user_id",
+                            "value": "={{ $json.senderId }}"
+                        }
+                    ]
+                }
+            },
+            "id": "check-handover",
+            "name": "Check Handover Status",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1050,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{ $json.is_paused }}",
+                            "value2": true
+                        }
+                    ]
+                }
+            },
+            "id": "if-paused",
+            "name": "Is Bot Paused?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                1250,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://api:8000/chat/debounce",
+                "method": "POST",
+                "jsonParameters": true,
+                "bodyParametersJson": "={{ JSON.stringify($json) }}"
+            },
+            "id": "add-to-debounce",
+            "name": "Add to Debounce Buffer",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [
+                1450,
+                500
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-paused",
+            "name": "Bot Paused (No-Op)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1450,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Is Page Event?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Page Event?": {
+            "main": [
+                [
+                    {
+                        "node": "Extract Messages",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extract Messages": {
+            "main": [
+                [
+                    {
+                        "node": "Is Admin?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Admin?": {
+            "main": [
+                [
+                    {
+                        "node": "Set Admin Handover",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Check Handover Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Check Handover Status": {
+            "main": [
+                [
+                    {
+                        "node": "Is Bot Paused?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Bot Paused?": {
+            "main": [
+                [
+                    {
+                        "node": "Bot Paused (No-Op)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Add to Debounce Buffer",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    }
+}
